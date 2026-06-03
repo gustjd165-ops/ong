@@ -181,7 +181,7 @@
             <hr style="border: 0; border-top: 1px dashed rgba(255, 255, 255, 0.4); margin: 24px 0;">
             <div class="progress-header" style="margin-bottom: 12px; align-items: center;">
                 <p class="progress-title" style="margin: 0; font-size: 16px;">해외마실 🧳</p>
-                <span class="progress-desc" id="flight-desc-text" style="font-weight: 800; color: #bae6fd; font-size: 14px;">티켓팅까지 0원 남음!</span>
+                <span class="progress-desc" id="flight-desc-text" style="font-weight: 800; color: #bae6fd; font-size: 14px;">티켓팅까지 0원!</span>
             </div>
             
             <div style="position: relative; height: 36px; margin-bottom: 30px; display: flex; align-items: center;">
@@ -258,11 +258,12 @@
 
     <div id="page-goals" class="page-section">
         <div class="card">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                <h2 style="margin:0;">🎯 이번 달 텅장 지수</h2>
-                <div id="goal-total-summary" style="font-size: 15px; color: var(--text-sub); text-align: right;"></div>
-            </div>
-            <div class="month-selector" style="margin-bottom: 24px;"><button onclick="changeGoalMonth(-1)">◀</button><span id="goal-current-month"></span><button onclick="changeGoalMonth(1)">▶</button></div>
+            <h2 style="margin:0; margin-bottom: 16px;">🎯 이번 달 텅장 지수</h2>
+            
+            <div class="month-selector" style="margin-bottom: 12px;"><button onclick="changeGoalMonth(-1)">◀</button><span id="goal-current-month"></span><button onclick="changeGoalMonth(1)">▶</button></div>
+            
+            <div id="goal-total-summary" style="font-size: 15px; color: var(--text-sub); text-align: right; margin-bottom: 16px;"></div>
+            
             <div id="goal-list-container"></div>
         </div>
         <div class="card">
@@ -358,6 +359,15 @@
 <script>
     // 🚨 구글 시트 웹 앱 URL 유지
     const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxJ0oeokHwpjgaDYXbcG-Lf8eWNCjrv3qgD-FT5iSyCJkxF8ddAXSho9CylOJ_lC7WU/exec";
+
+    Chart.Tooltip.positioners.centerBar = function(elements) {
+        if (elements.length) {
+            const el = elements[0].element;
+            // 막대의 시작(base)과 끝(x)의 중간값을 x좌표로, 세로 중앙을 y좌표로 반환합니다.
+            return { x: (el.base + el.x) / 2, y: el.y };
+        }
+        return false;
+    };
 
     let appState = {
         categories: ["🍚 식비 (집밥/장보기)", "🍕 외식 / 배달", "🛒 생활용품 / 잡화", "🏠 주거 / 공과금", "🚗 교통 / 차량", "☕ 카페 / 간식", "🛍️ 쇼핑 / 꾸밈", "✈️ 여행 / 문화", "🎉 경조사 / 가족", "🍷 슼 데이트"],
@@ -584,7 +594,7 @@
             
             let moneyLeft = targetAmount - availableForBucket;
             if(moneyLeft < 0) moneyLeft = 0;
-            flightDesc.innerText = `티켓팅까지 ${Math.round(moneyLeft).toLocaleString()}원 남음!`;
+            flightDesc.innerText = `티켓팅까지 ${Math.round(moneyLeft).toLocaleString()}원!`;
         }
 
         // 100만 원 달성 시 팝업 띄우기
@@ -638,10 +648,12 @@
             let amountText = ''; let hasRecordClass = '';
 
             if (isNoSpend) {
-                amountText = `<div class="day-amount" style="background-color: var(--joint-color); color: white; padding: 2px 0; width: 90%; border-radius: 6px; margin-top: 4px; font-weight: bold; font-size: 9px; letter-spacing: -0.5px; box-shadow: 0 1px 2px rgba(43, 186, 74, 0.3); white-space: nowrap; overflow: hidden; text-overflow: clip;">무지출</div>`;
+                // 💡 무지출 뱃지 글자 크기를 11px로 확대
+                amountText = `<div class="day-amount" style="background-color: var(--joint-color); color: white; padding: 2px 0; width: 90%; border-radius: 6px; margin-top: 4px; font-weight: bold; font-size: 11px; letter-spacing: -0.5px; box-shadow: 0 1px 2px rgba(43, 186, 74, 0.3); white-space: nowrap; overflow: hidden; text-overflow: clip;">무지출</div>`;
                 hasRecordClass = 'has-record';
             } else if (amount > 0) {
-                amountText = `<div class="day-amount" style="margin-top: 4px; white-space: nowrap; letter-spacing: -0.5px; font-size: 9px;">${(amount / 10000).toFixed(1)}만</div>`;
+                // 💡 금액 글자 크기를 11px로 키우고, 굵게(bold) 속성과 눈에 잘 띄는 색상 추가
+                amountText = `<div class="day-amount" style="margin-top: 4px; white-space: nowrap; letter-spacing: -0.6px; font-size: 11px; font-weight: bold; color: var(--text-main);">${(amount / 10000).toFixed(1)}만</div>`;
                 hasRecordClass = 'has-record';
             }
             
@@ -951,9 +963,9 @@
                     layout: { padding: 10 }, 
                     plugins: { 
                         legend: { display: false },
-                       tooltip: {
-                            position: 'average', // 💡 막대의 중간(가운데) 정렬로 변경!
-                            yAlign: 'top',       // 말풍선 꼬리를 위(top)로 올려서 전체 창을 아래로 내림
+                        tooltip: {
+                            position: 'centerBar', // 💡 수정: 방금 상단에 만든 '정중앙' 커스텀 속성 적용!
+                            yAlign: 'bottom',      // 💡 팁: 'bottom'으로 하면 꼬리가 아래를 향하며 막대 바로 위로 예쁘게 뜹니다.
                             callbacks: {
                                 title: function() { return ''; }, 
                                 label: function(context) {
