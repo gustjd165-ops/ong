@@ -180,9 +180,9 @@
             <div class="progress-bar-bg"><div class="progress-bar-fill" id="display-nospend-bar" style="width: 0%; background-color: #6ee7b7;"></div></div>
             <hr style="border: 0; border-top: 1px dashed rgba(255, 255, 255, 0.4); margin: 24px 0;">
             <div class="progress-header" style="margin-bottom: 12px; align-items: center;">
-                <p class="progress-title" style="margin: 0; font-size: 16px;">해외마실 🧳</p>
-                <span class="progress-desc" id="flight-desc-text" style="font-weight: 800; color: #bae6fd; font-size: 14px;">티켓팅까지 0원!</span>
-            </div>
+    <p class="progress-title" id="flight-title-text" style="margin: 0; font-size: 16px;">해외마실 🧳</p>
+    <span class="progress-desc" id="flight-desc-text" style="font-weight: 800; color: #bae6fd; font-size: 14px;">티켓팅까지 0원!</span>
+</div>
             
             <div style="position: relative; height: 36px; margin-bottom: 30px; display: flex; align-items: center;">
                 
@@ -224,18 +224,17 @@
         </div>
     </div>
     <div class="modal-overlay" id="ticket-modal">
-        <div class="modal-content" style="text-align: center; padding: 40px 20px;">
-            <div style="font-size: 60px; margin-bottom: 16px;">🎟️✈️</div>
-            <h2 style="margin: 0 0 12px 0; color: #0ea5e9; font-size: 24px;">100만 원 달성!</h2>
-            <p style="font-size: 15px; color: var(--text-sub); margin-bottom: 30px; line-height: 1.6; word-break: keep-all;">
-                월별 아낀 예산이 100만 원을 돌파했습니다!<br>두 분 모두 탑승 확인을 완료하면<br>비행기가 출발하고 예산이 초기화됩니다.
-            </p>
-            <div style="display: flex; gap: 10px; justify-content: center;">
-                <button class="btn-submit" id="btn-husband-ticket" style="flex: 1; padding: 14px; font-size: 15px; background-color: var(--husband-color); margin-top: 0;" onclick="confirmTicket('husband')">울이 탑승 🙋‍♂️</button>
-                <button class="btn-submit" id="btn-wife-ticket" style="flex: 1; padding: 14px; font-size: 15px; background-color: var(--wife-color); margin-top: 0;" onclick="confirmTicket('wife')">쫌이 탑승 🙋‍♀️</button>
-            </div>
+    	<div class="modal-content" style="text-align: center; padding: 40px 20px;">
+        <div style="font-size: 60px; margin-bottom: 16px;">🎟️✈️</div>
+        <h2 style="margin: 0 0 12px 0; color: #0ea5e9; font-size: 24px;">100만 원 달성!</h2>
+        <p style="font-size: 15px; color: var(--text-sub); margin-bottom: 30px; line-height: 1.6; word-break: keep-all;">
+            월별 아낀 예산이 100만 원을 돌파했습니다!<br>탑승을 확인하면 비행기가 출발하고<br>다음 여행을 위해 누적 금액이 초기화됩니다.
+        </p>
+        <div style="display: flex; justify-content: center;">
+            <button class="btn-submit" style="width: 100%; padding: 16px; font-size: 18px; background-color: #0ea5e9; margin-top: 0;" onclick="confirmTicket()">탑승하기 ✈️</button>
         </div>
     </div>
+</div>
 
     <div id="page-input" class="page-section">
         <button class="back-btn" onclick="closeInputPage()">← 뒤로 가기</button>
@@ -358,7 +357,7 @@
 
 <script>
     // 🚨 구글 시트 웹 앱 URL 유지
-    const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxJ0oeokHwpjgaDYXbcG-Lf8eWNCjrv3qgD-FT5iSyCJkxF8ddAXSho9CylOJ_lC7WU/exec";
+    const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxNWUMxx5_yEWoWzBH49q249T6hvp6DkOINuZl_R3kViGcenggqa6IRDDJ-w0OUr5PO/exec";
 
     Chart.Tooltip.positioners.centerBar = function(elements) {
         if (elements.length) {
@@ -537,45 +536,83 @@
         let timePace = isCurrentMonthReal ? Math.round((todayDate.getDate() / totalDaysInMonth) * 100) : ((totalDaysBase === 0) ? 0 : 100);
         let data = calculateMonthlyOverallRate(currentWriteYear, currentWriteMonth); let spendPace = data.percent;
 
-        // --- ✨ 해외여행 버킷리스트 정밀 일할 계산 로직 ---
+       // --- ✨ 해외여행 버킷리스트 정밀 일할 계산 로직 (스냅샷 복구 패치 적용) ---
+        if (!bucketState.history) bucketState.history = {};
+
         let totalMonthlyBudget = 0;
         appState.categories.forEach(cat => { totalMonthlyBudget += (appState.categoryBudgets[cat] || 0); });
 
-        let totalSpentAllTime = 0;
-        let earliestDate = new Date(todayDate); 
-        
+        // 1. 가계부 데이터에서 '실제로 지출 기록이 있는 과거의 달'만 정확히 추출
+        const pastUniqueMonths = new Set();
         appState.expenses.forEach(exp => {
-            let expDate = new Date(exp.date);
-            // 과거 ~ 오늘 지출만 (미래 날짜 선입력 방어)
-            if (expDate <= todayDate) {
-                if (exp.amount > 0 && exp.category !== '무지출 데이') {
-                    totalSpentAllTime += exp.amount;
-                }
-                if (expDate < earliestDate) {
-                    earliestDate = expDate;
+            if (exp.amount > 0 && exp.category !== '무지출 데이') {
+                const eDate = new Date(exp.date);
+                if (eDate.getFullYear() < todayDate.getFullYear() || (eDate.getFullYear() === todayDate.getFullYear() && eDate.getMonth() < todayDate.getMonth())) {
+                    const ym = `${eDate.getFullYear()}-${String(eDate.getMonth() + 1).padStart(2, '0')}`;
+                    pastUniqueMonths.add(ym);
                 }
             }
         });
 
-        // 과거 달의 온전한 개수 파악
-        let startYear = earliestDate.getFullYear();
-        let startMonth = earliestDate.getMonth();
-        let currentYear = todayDate.getFullYear();
-        let currentMonth = todayDate.getMonth();
-        
-        let pastMonthsCount = (currentYear - startYear) * 12 + (currentMonth - startMonth);
-        if (pastMonthsCount < 0) pastMonthsCount = 0;
+        let pastFrozenSavingsTotal = 0;
+        let needsSaveConfigs = false;
 
-        // 이번 달 일할 계산 비율 (예: 오늘이 15일 / 총 30일 = 50%)
-        let daysInCurrentMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-        let currentMonthProratedRatio = todayDate.getDate() / daysInCurrentMonth;
+        // 🚨 [긴급 복구 패치 1] 공백기 가짜 흑자 청소 (앱 안 쓴 달에 돈 쌓이는 버그 해결)
+        Object.keys(bucketState.history).forEach(ym => {
+            if (!pastUniqueMonths.has(ym)) {
+                delete bucketState.history[ym];
+                needsSaveConfigs = true;
+            }
+        });
 
-        // 진짜 누적 총 예산 = (과거 달 * 월 예산) + (이번 달 일할 계산)
-        let exactTotalBudget = (pastMonthsCount * totalMonthlyBudget) + (totalMonthlyBudget * currentMonthProratedRatio);
-        
-        // 100만 원 목표 기준 계산
-        let targetAmount = 1000000; 
-        let totalSaved = exactTotalBudget - totalSpentAllTime;
+        // 2. 진짜 지출 기록이 있는 달만 스냅샷 정산 (예산 변경 시 과거 동결)
+        pastUniqueMonths.forEach(ym => {
+            if (bucketState.history[ym] === undefined) {
+                const [yyyy, mm] = ym.split('-');
+                const monthlySpent = appState.expenses
+                    .filter(e => {
+                        const eDate = new Date(e.date);
+                        return eDate.getFullYear() === parseInt(yyyy) && (eDate.getMonth() + 1) === parseInt(mm) && e.amount > 0 && e.category !== '무지출 데이';
+                    })
+                    .reduce((sum, e) => sum + e.amount, 0);
+                
+                bucketState.history[ym] = totalMonthlyBudget - monthlySpent;
+                needsSaveConfigs = true;
+            }
+        });
+
+        Object.values(bucketState.history).forEach(saved => {
+            pastFrozenSavingsTotal += saved;
+        });
+
+        // 3. 이번 달 실시간 일할 정산
+        const currentYear = todayDate.getFullYear();
+        const currentMonth = todayDate.getMonth();
+        const thisMonthSpent = appState.expenses
+            .filter(e => {
+                const eDate = new Date(e.date);
+                return eDate.getFullYear() === currentYear && eDate.getMonth() === currentMonth && e.amount > 0 && e.category !== '무지출 데이';
+            })
+            .reduce((sum, e) => sum + e.amount, 0);
+
+        const daysInCurrentMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+        const currentMonthProratedRatio = todayDate.getDate() / daysInCurrentMonth;
+        const proratedBudget = totalMonthlyBudget * currentMonthProratedRatio;
+        const thisMonthSaved = proratedBudget - thisMonthSpent;
+
+        // 4. 총 모은 돈 계산
+        let targetAmount = 1000000;
+        const totalSaved = pastFrozenSavingsTotal + thisMonthSaved;
+
+        // 🚨 [긴급 복구 패치 2] 사이클(횟수 x3) 뻥튀기 방어 및 원상복구
+        if (bucketState.cycles > 0 && (bucketState.cycles * targetAmount) > totalSaved) {
+            bucketState.cycles = Math.floor(totalSaved / targetAmount);
+            if (bucketState.cycles < 0) bucketState.cycles = 0;
+            needsSaveConfigs = true;
+        }
+
+        if (needsSaveConfigs) saveAppConfigs();
+
         let availableForBucket = totalSaved - (bucketState.cycles * targetAmount);
         if (availableForBucket < 0) availableForBucket = 0; 
         
@@ -585,8 +622,16 @@
         const flightAirplane = document.getElementById('flight-airplane'); 
         const flightFill = document.getElementById('flight-progress-fill');
         const flightDesc = document.getElementById('flight-desc-text'); 
+        const flightTitle = document.getElementById('flight-title-text');
         
-        if (flightAirplane && flightFill && flightDesc) {
+        if (flightAirplane && flightFill && flightDesc && flightTitle) {
+            // 💡 달성 횟수(Cycles) 뱃지 표시
+            if (bucketState.cycles > 0) {
+                flightTitle.innerHTML = `해외마실 🧳 <span style="font-size: 12px; color: #ffffff; background-color: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 12px; margin-left: 6px; font-weight: 600; vertical-align: middle; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">✖ ${bucketState.cycles}</span>`;
+            } else {
+                flightTitle.innerHTML = `해외마실 🧳`;
+            }
+
             // 비행기가 섬을 덮지 않도록 최대 90% 위치까지만 이동
             let visualPercent = bucketPercent > 90 ? 90 : bucketPercent;
             flightAirplane.style.left = visualPercent + '%';
@@ -597,11 +642,10 @@
             flightDesc.innerText = `티켓팅까지 ${Math.round(moneyLeft).toLocaleString()}원!`;
         }
 
-        // 100만 원 달성 시 팝업 띄우기
-        if (availableForBucket >= targetAmount && (!bucketState.husbandConfirmed || !bucketState.wifeConfirmed)) {
+        // 상호 확인 조건 제거: 달성 시 바로 단판 팝업
+        if (availableForBucket >= targetAmount) {
             showTicketPopup();
         }
-        // ------------------------------------------------
 
         const collarStatus = document.getElementById('display-collar-status'); let diff = spendPace - timePace;
         if (collarStatus) {
@@ -665,19 +709,41 @@
         calGrid.innerHTML = html;
     }
 
-    window.toggleReaction = function(btn, dateStr, amount, who, category) {
+   window.toggleReaction = function(btn, dateStr, amount, who, category) {
         const reactions = ['🤍', '❤️', '👍', '😡'];
-        let currentIndex = reactions.indexOf(btn.innerText); let nextIndex = (currentIndex + 1) % reactions.length;
-        let newReaction = reactions[nextIndex];
-        btn.innerText = newReaction; btn.style.transform = 'scale(1.3)';
-        setTimeout(() => { btn.style.transform = 'scale(1)'; }, 200);
-
+        
+        // 1. 화면(DOM) 텍스트를 믿지 말고, 실제 데이터에서 해당 내역을 먼저 찾습니다.
         let expIndex = appState.expenses.findIndex(e => e.date === dateStr && e.amount === amount && e.who === who && e.category === category);
+        
         if(expIndex > -1) {
             let exp = appState.expenses[expIndex];
+            
+            // 2. 버튼 텍스트 대신, 데이터에 저장된 확실한 값을 기준으로 다음 리액션을 계산합니다.
+            let currentReaction = exp.reaction || '🤍';
+            let currentIndex = reactions.indexOf(currentReaction); 
+            let nextIndex = (currentIndex + 1) % reactions.length;
+            let newReaction = reactions[nextIndex];
+
+            // 3. 화면(UI) 애니메이션 및 텍스트 업데이트
+            btn.innerText = newReaction; 
+            btn.style.transform = 'scale(1.3)';
+            setTimeout(() => { btn.style.transform = 'scale(1)'; }, 200);
+
+            // 4. 상태 업데이트 후 구글 시트로 전송 (안전장치 추가됨)
             exp.reaction = newReaction;
             let payload = { action: 'update', oldDate: exp.date, oldAmount: exp.amount, oldWho: exp.who, oldCategory: exp.category, ...exp };
-            fetch(GOOGLE_SHEET_URL, { method: 'POST', body: JSON.stringify(payload) });
+            
+            fetch(GOOGLE_SHEET_URL, { 
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'text/plain;charset=utf-8' // 통신 오류 방지
+                },
+                body: JSON.stringify(payload) 
+            }).then(response => {
+                console.log("리액션 구글 시트 전송 완료!");
+            }).catch(error => {
+                console.error("리액션 전송 실패:", error);
+            });
         }
     };
 
@@ -996,35 +1062,28 @@
 
     window.showTicketPopup = function() {
         const modal = document.getElementById('ticket-modal');
+        // 이미 띄워져 있으면 중복 실행 방지
         if (modal.style.display === 'block' || modal.classList.contains('active')) return;
+        
         modal.style.display = 'block';
         setTimeout(() => modal.classList.add('active'), 10);
+    };
+
+    window.confirmTicket = function() {
+        // 탑승 버튼 클릭 즉시 축하 효과
+        confetti({ particleCount: 200, spread: 120, origin: { y: 0.5 }, zIndex: 9999 });
         
-        const btnHusband = document.getElementById('btn-husband-ticket');
-        const btnWife = document.getElementById('btn-wife-ticket');
+        // 사이클(달성 횟수) 1 증가 및 구글 시트 저장
+        bucketState.cycles += 1;
+        saveAppConfigs(); 
         
-        if (bucketState.husbandConfirmed) {
-            btnHusband.innerText = "울이 확인 완료 ✓";
-            btnHusband.style.backgroundColor = "#e5e8eb";
-            btnHusband.style.color = "#8b95a1";
-            btnHusband.disabled = true;
-        } else {
-            btnHusband.innerText = "울이 탑승 🙋‍♂️";
-            btnHusband.style.backgroundColor = "var(--husband-color)";
-            btnHusband.style.color = "white";
-            btnHusband.disabled = false;
-        }
-        if (bucketState.wifeConfirmed) {
-            btnWife.innerText = "쫌이 확인 완료 ✓";
-            btnWife.style.backgroundColor = "#e5e8eb";
-            btnWife.style.color = "#8b95a1";
-            btnWife.disabled = true;
-        } else {
-            btnWife.innerText = "쫌이 탑승 🙋‍♀️";
-            btnWife.style.backgroundColor = "var(--wife-color)";
-            btnWife.style.color = "white";
-            btnWife.disabled = false;
-        }
+        // 팝업 닫기
+        const modal = document.getElementById('ticket-modal');
+        modal.classList.remove('active');
+        setTimeout(() => modal.style.display = 'none', 300);
+        
+        // 화면 리렌더링 (비행기가 다시 0% 위치로 출발)
+        renderCover(); 
     };
 
     window.confirmTicket = function(who) {
