@@ -209,7 +209,15 @@
             <p style="text-align: center; font-size: 12px; color: var(--text-sub); margin-top: 16px;">날짜를 터치하면 상세 내역을 보거나 무지출을 기록할 수 있습니다.</p>
         </div>
     </div>
-
+    <div class="modal-overlay" id="category-modal" onclick="closeCategoryModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 id="category-modal-title" style="margin: 0; font-size: 20px; color: var(--text-main);">카테고리 내역</h2>
+                <button style="background: none; border: none; font-size: 20px; color: var(--text-sub); cursor: pointer; padding: 0;" onclick="closeCategoryModal(true)">✕</button>
+            </div>
+            <div id="category-expense-list"></div>
+        </div>
+    </div>
     <div class="modal-overlay" id="daily-modal" onclick="closeDailyModal(event)">
         <div class="modal-content" onclick="event.stopPropagation()">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
@@ -537,7 +545,11 @@
         let data = calculateMonthlyOverallRate(currentWriteYear, currentWriteMonth); let spendPace = data.percent;
 
        // --- ✨ 해외여행 버킷리스트 정밀 일할 계산 로직 (스냅샷 복구 패치 적용) ---
-        if (!bucketState.history) bucketState.history = {};
+        // 🚨 [마이그레이션 패치] 기존 잘못된 스냅샷(예산 없는 항목 포함)을 버리고,
+        // 오직 '예산이 설정된 항목'만으로 새로운 보관함(historyV2)을 만들어 영구 동결합니다!
+        if (!bucketState.historyV2) {
+            bucketState.historyV2 = {};
+        }
 
         let totalMonthlyBudget = 0;
         appState.categories.forEach(cat => { totalMonthlyBudget += (appState.categoryBudgets[cat] || 0); });
@@ -557,31 +569,33 @@
         let pastFrozenSavingsTotal = 0;
         let needsSaveConfigs = false;
 
-        // 🚨 [긴급 복구 패치 1] 공백기 가짜 흑자 청소 (앱 안 쓴 달에 돈 쌓이는 버그 해결)
-        Object.keys(bucketState.history).forEach(ym => {
+        // 🚨 [긴급 복구 패치 1] 공백기 가짜 흑자 청소
+        Object.keys(bucketState.historyV2).forEach(ym => {
             if (!pastUniqueMonths.has(ym)) {
-                delete bucketState.history[ym];
+                delete bucketState.historyV2[ym];
                 needsSaveConfigs = true;
             }
         });
 
         // 2. 진짜 지출 기록이 있는 달만 스냅샷 정산 (예산 변경 시 과거 동결)
         pastUniqueMonths.forEach(ym => {
-            if (bucketState.history[ym] === undefined) {
+            if (bucketState.historyV2[ym] === undefined) {
                 const [yyyy, mm] = ym.split('-');
                 const monthlySpent = appState.expenses
                     .filter(e => {
                         const eDate = new Date(e.date);
-                        return eDate.getFullYear() === parseInt(yyyy) && (eDate.getMonth() + 1) === parseInt(mm) && e.amount > 0 && e.category !== '무지출 데이';
+                        // 💡 핵심 변경 1: 예산이 설정된(0원 초과) 카테고리의 지출만 합산!
+                        const isBudgeted = (appState.categoryBudgets[e.category] || 0) > 0;
+                        return eDate.getFullYear() === parseInt(yyyy) && (eDate.getMonth() + 1) === parseInt(mm) && e.amount > 0 && e.category !== '무지출 데이' && isBudgeted;
                     })
                     .reduce((sum, e) => sum + e.amount, 0);
                 
-                bucketState.history[ym] = totalMonthlyBudget - monthlySpent;
+                bucketState.historyV2[ym] = totalMonthlyBudget - monthlySpent;
                 needsSaveConfigs = true;
             }
         });
 
-        Object.values(bucketState.history).forEach(saved => {
+        Object.values(bucketState.historyV2).forEach(saved => {
             pastFrozenSavingsTotal += saved;
         });
 
@@ -591,7 +605,9 @@
         const thisMonthSpent = appState.expenses
             .filter(e => {
                 const eDate = new Date(e.date);
-                return eDate.getFullYear() === currentYear && eDate.getMonth() === currentMonth && e.amount > 0 && e.category !== '무지출 데이';
+                // 💡 핵심 변경 2: 이번 달도 예산이 설정된 카테고리의 지출만 합산!
+                const isBudgeted = (appState.categoryBudgets[e.category] || 0) > 0;
+                return eDate.getFullYear() === currentYear && eDate.getMonth() === currentMonth && e.amount > 0 && e.category !== '무지출 데이' && isBudgeted;
             })
             .reduce((sum, e) => sum + e.amount, 0);
 
@@ -836,7 +852,17 @@
         let html = '';
         goalItems.forEach(item => {
             let colorClass = item.percent >= 100 ? 'fill-danger' : (item.percent >= 80 ? 'fill-warning' : 'fill-safe');
-            html += `<div class="goal-item"><div class="goal-header" style="flex-direction: column; align-items: flex-start; gap: 6px;"><span class="goal-category">${item.cat}</span><span class="goal-amounts"><strong>${item.spent.toLocaleString()}</strong> / ${item.budget.toLocaleString()}원</span></div><div class="goal-bar-bg"><div class="goal-bar-fill ${colorClass}" style="width: ${item.percent > 100 ? 100 : item.percent}%"></div></div></div>`;
+            // 💡 상세보기 글자 제거 & currentGoalYear, currentGoalMonth 정보 넘기기
+            // 💡 margin 값을 15px에서 6px로 줄여서 위아래 간격을 좁힙니다!
+            html += `<div class="goal-item" style="cursor: pointer; padding: 6px 8px; margin: 0 -8px 0px -8px; border-radius: 12px; transition: background 0.2s;" onclick="openCategoryModal('${item.cat}', currentGoalYear, currentGoalMonth)" onmousedown="this.style.backgroundColor='#f2f4f6'" onmouseup="this.style.backgroundColor='transparent'" ontouchstart="this.style.backgroundColor='#f2f4f6'" ontouchend="this.style.backgroundColor='transparent'">
+                <div class="goal-header" style="flex-direction: column; align-items: flex-start; gap: 6px;">
+                    <span class="goal-category">${item.cat}</span>
+                    <span class="goal-amounts"><strong>${item.spent.toLocaleString()}</strong> / ${item.budget.toLocaleString()}원</span>
+                </div>
+                <div class="goal-bar-bg">
+                    <div class="goal-bar-fill ${colorClass}" style="width: ${item.percent > 100 ? 100 : item.percent}%"></div>
+                </div>
+            </div>`;
         });
         
         container.innerHTML = goalItems.length > 0 ? html : '<div class="empty-data-msg">설정 탭에서 원하는 카테고리의 예산을 추가해주세요! 💸</div>';
@@ -1050,8 +1076,13 @@
                 }
             };
             
-            document.getElementById(`${type}-legend`).innerHTML = '<div class="custom-legend">' + sortedLabels.map((l,i) => `<div class="legend-item"><div class="legend-left"><span class="legend-color" style="background-color: ${sortedColors[i] || '#3182f6'}"></span><span class="legend-label">${l}</span></div><span class="legend-value">${sortedData[i].toLocaleString()}원 <span style="font-size:12px; font-weight:normal; color:#8b95a1;">(${Math.round((sortedData[i]/total)*100)}%)</span></span></div>`).join('') + '</div>';
-        }
+            document.getElementById(`${type}-legend`).innerHTML = '<div class="custom-legend">' + sortedLabels.map((l,i) => {
+                // 💡 월별(monthly) 카테고리 통계일 때만 터치 효과와 모달 이벤트 부여 (사용자별 통계는 제외)
+                let clickAction = type === 'monthly' ? `onclick="openCategoryModal('${l}', currentStatYear, currentStatMonth)" style="cursor: pointer; padding: 6px 8px; margin: 0 -8px; border-radius: 8px; transition: background 0.2s;" onmousedown="this.style.backgroundColor='#f2f4f6'" onmouseup="this.style.backgroundColor='transparent'" ontouchstart="this.style.backgroundColor='#f2f4f6'" ontouchend="this.style.backgroundColor='transparent'"` : `style="padding: 6px 8px; margin: 0 -8px;"`;
+                
+                return `<div class="legend-item" ${clickAction}><div class="legend-left"><span class="legend-color" style="background-color: ${sortedColors[i] || '#3182f6'}"></span><span class="legend-label">${l}</span></div><span class="legend-value">${sortedData[i].toLocaleString()}원 <span style="font-size:12px; font-weight:normal; color:#8b95a1;">(${Math.round((sortedData[i]/total)*100)}%)</span></span></div>`;
+            }).join('') + '</div>';
+ 	}
 
         chartInstances[type] = new Chart(document.getElementById(`${type}Chart`), config);
         
@@ -1086,31 +1117,76 @@
         renderCover(); 
     };
 
-    window.confirmTicket = function(who) {
-        if (who === 'husband') bucketState.husbandConfirmed = true;
-        if (who === 'wife') bucketState.wifeConfirmed = true;
+    
+// ✨ 카테고리 상세 모달 열기 (고액순 정렬 + 내역 위치 일자 옆으로 패치 🚀)
+    window.openCategoryModal = function(category, year, month) {
+        document.getElementById('category-modal-title').innerText = `${category} (고액순 💸)`;
+        const listContainer = document.getElementById('category-expense-list');
         
-        showTicketPopup(); 
-        saveAppConfigs(); 
+        // 1. 해당 월, 해당 카테고리 데이터만 필터링
+        const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+        let categoryData = appState.expenses.filter(e => e.date.startsWith(monthPrefix) && e.category === category && e.amount > 0);
         
-        if (bucketState.husbandConfirmed && bucketState.wifeConfirmed) {
-            setTimeout(() => {
-                confetti({ particleCount: 200, spread: 120, origin: { y: 0.5 }, zIndex: 9999 });
-                alert("축하합니다! 비행기가 출발합니다! ✈️ (누적 금액은 초기화됩니다)");
+        // 2. 금액 기준 내림차순(고액순) 정렬
+        categoryData.sort((a, b) => b.amount - a.amount);
+
+        if(categoryData.length === 0) {
+            listContainer.innerHTML = '<p style="text-align:center; color:var(--text-sub); font-size:14px; padding:20px 0;">기록된 내역이 없습니다.</p>';
+        } else {
+            let listHtml = '';
+            categoryData.forEach((exp) => {
+                const safeDate = `'${exp.date}'`; const safeCategory = `'${exp.category}'`; const safeWho = `'${exp.who}'`;
+                let badgeClass = exp.who === 'joint' ? 'joint' : (exp.who === 'husband' ? 'husband' : 'wife'); 
+                let badgeText = exp.who === 'joint' ? '울쫌' : (exp.who === 'husband' ? '울이' : '쫌이');
                 
-                bucketState.cycles += 1;
-                bucketState.husbandConfirmed = false;
-                bucketState.wifeConfirmed = false;
-                saveAppConfigs(); 
+                // 💡 1. 폰트 높이(line-height)를 통일하고, 옅은 세로줄(border-left)을 추가해 깔끔하게 분리!
+                // 💡 내역 텍스트를 font-weight: bold; 로 변경하여 눈에 띄게 강조!
+               // 💡 글자 테두리 대신 독립된 가상 선(1px x 12px)을 날짜와 내역 사이에 끼워 넣어 완벽하게 세로 정중앙 고정!
+                let descText = exp.desc ? `<span style="width: 1px; height: 12px; background-color: #e5e8eb; margin: 0 8px; display: inline-block;"></span><span style="color: var(--text-main); font-weight: bold; font-size: 14px; display: inline-block;">${exp.desc}</span>` : '';
+                let currentReaction = exp.reaction || '🤍';
                 
-                const modal = document.getElementById('ticket-modal');
-                modal.classList.remove('active');
-                setTimeout(() => modal.style.display = 'none', 300);
-                
-                renderCover(); 
-            }, 500);
+                let shortDate = `${parseInt(exp.date.split('-')[1])}/${parseInt(exp.date.split('-')[2])}`;
+
+                // 💡 2. align-items: center 와 gap 속성을 활용해 뱃지-날짜-내역의 세로 중앙을 완벽 정렬!
+                listHtml += `<div class="daily-list-item">
+                    <div class="daily-list-left">
+                        <div style="display: flex; align-items: center; flex-wrap: wrap; line-height: 1.2;">
+                            <span class="daily-badge ${badgeClass}" style="margin-right: 6px; margin-bottom: 0;">${badgeText}</span> 
+                            <span style="font-size:14px; font-weight:bold; color:var(--text-main); letter-spacing: -0.3px;">${shortDate}</span>
+                            ${descText}
+                        </div>
+                        <div style="font-size:12px; color:var(--text-sub); margin-top: 6px; margin-left: 2px;">${exp.payment}</div>
+                    </div>
+                    <div class="daily-list-right">
+                        <div style="font-size:16px; font-weight:bold; color:var(--text-main); display:flex; align-items:center; gap:6px;">
+                            <button class="btn-reaction" onclick="toggleReaction(this, ${safeDate}, ${exp.amount}, ${safeWho}, ${safeCategory})">${currentReaction}</button>
+                            ${exp.amount.toLocaleString()}원
+                        </div>
+                        <div style="margin-top: 4px;">
+                            <button class="btn-edit" onclick="closeCategoryModal(); openEditExpense(${safeDate}, ${exp.amount}, ${safeWho}, ${safeCategory});">수정</button>
+                            <button class="btn-delete" onclick="closeCategoryModal(); deleteExpense(${safeDate}, ${exp.amount}, ${safeWho}, ${safeCategory});">삭제</button>
+                        </div>
+                    </div>
+                </div>`;
+            });
+            listContainer.innerHTML = listHtml;
         }
-    };
+        
+        const modal = document.getElementById('category-modal'); 
+        modal.style.display = 'block'; 
+        setTimeout(() => modal.classList.add('active'), 10); 
+        document.getElementById('main-bottom-nav').style.display = 'none';
+    }
+
+    // ✨ 카테고리 상세 모달 닫기
+    window.closeCategoryModal = function(force = false) { 
+        const modal = document.getElementById('category-modal'); 
+        modal.classList.remove('active'); 
+        setTimeout(() => { 
+            modal.style.display = 'none'; 
+            document.getElementById('main-bottom-nav').style.display = 'grid'; 
+        }, 300); 
+    }
 </script>
 </body>
 </html>
